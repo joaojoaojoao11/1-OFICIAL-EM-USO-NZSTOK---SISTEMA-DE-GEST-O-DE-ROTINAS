@@ -67,6 +67,16 @@ export class FinanceService {
     return error ? [] : data;
   }
 
+  static async getAllCollectionLogs(): Promise<CollectionHistory[]> {
+    if (!supabase) return [];
+    const { data, error } = await supabase
+      .from('collection_history')
+      .select('*')
+      .order('data_registro', { ascending: false })
+      .limit(500); // Limite de segurança para performance
+    return error ? [] : data;
+  }
+
   static async getAccountsReceivable(): Promise<AccountsReceivable[]> {
     if (!supabase) return [];
     const { data, error } = await supabase.from('accounts_receivable').select('*').order('data_vencimento', { ascending: true });
@@ -397,16 +407,80 @@ export class FinanceService {
 
   static async processAPStaging(items: AccountsPayable[]): Promise<APStagingItem[]> {
     const current = await this.getAccountsPayable();
+    
+    // Funções de limpeza reforçadas
+    const cleanStr = (s: any) => {
+        if (s === null || s === undefined) return '';
+        const str = String(s);
+        // Evita strings literais "null" ou "undefined" que possam ter sido passadas
+        if (str === 'null' || str === 'undefined') return '';
+        return str.trim().toUpperCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, "") // Remove acentos
+            .replace(/\s+/g, ' '); // Remove espaços duplos
+    };
+    
+    const cleanNum = (n: any) => {
+        if (n === null || n === undefined || n === '') return 0;
+        return Number(n);
+    };
+
+    const cleanDate = (d: any) => {
+        if (!d) return '';
+        // Tenta pegar YYYY-MM-DD
+        let str = String(d);
+        if (str.includes('T')) str = str.split('T')[0];
+        // Se vier DD/MM/YYYY do banco (raro, mas possível em views), normaliza
+        if (str.includes('/')) {
+             const parts = str.split('/');
+             if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`; 
+        }
+        return str.trim();
+    };
+
     return items.map(item => {
-      const match = current.find(c => c.id === item.id);
+      // Comparação de ID insensível a caixa
+      const match = current.find(c => cleanStr(c.id) === cleanStr(item.id));
       if (!match) return { data: item, status: 'NEW' as const };
       
       const diff: string[] = [];
-      if (match.fornecedor !== item.fornecedor) diff.push('FORNECEDOR');
-      if (Math.abs(match.saldo - item.saldo) > 0.01) diff.push('SALDO');
-      if (match.situacao !== item.situacao) diff.push('SITUACAO');
       
-      if (diff.length > 0) return { data: item, status: 'CHANGED' as const, diff };
+      // Validação abrangente de todos os campos com normalização
+      if (cleanStr(match.fornecedor) !== cleanStr(item.fornecedor)) diff.push('FORNECEDOR');
+      if (cleanStr(match.situacao) !== cleanStr(item.situacao)) diff.push('SITUAÇÃO');
+      
+      // Comparação numérica com margem de erro mínima para float (centavos)
+      if (Math.abs(cleanNum(match.valorDocumento) - cleanNum(item.valorDocumento)) > 0.01) diff.push('VALOR DOC');
+      if (Math.abs(cleanNum(match.saldo) - cleanNum(item.saldo)) > 0.01) diff.push('SALDO');
+      if (Math.abs(cleanNum(match.valorPago) - cleanNum(item.valorPago)) > 0.01) diff.push('VALOR PAGO');
+      
+      // Comparação de datas normalizadas (YYYY-MM-DD)
+      if (cleanDate(match.dataEmissao) !== cleanDate(item.dataEmissao)) diff.push('EMISSÃO');
+      if (cleanDate(match.dataVencimento) !== cleanDate(item.dataVencimento)) diff.push('VENCIMENTO');
+      if (cleanDate(match.dataLiquidacao) !== cleanDate(item.dataLiquidacao)) diff.push('DATA LIQ');
+      
+      // Comparação de strings normalizadas
+      if (cleanStr(match.numeroDocumento) !== cleanStr(item.numeroDocumento)) diff.push('Nº DOC');
+      if (cleanStr(match.categoria) !== cleanStr(item.categoria)) diff.push('CATEGORIA');
+      if (cleanStr(match.historico) !== cleanStr(item.historico)) diff.push('HISTÓRICO');
+      
+      // Competência pode vir em formatos diferentes, normalizar apenas se ambos existirem
+      const compDb = cleanStr(match.competencia);
+      const compXls = cleanStr(item.competencia);
+      // Ignora diff se um tem zero à esquerda e outro não (ex: 01/2024 vs 1/2024)
+      if (compDb !== compXls) {
+         // Tenta normalizar removendo zero à esquerda do mês
+         const normC = (s: string) => s.replace(/^0(\d\/)/, '$1');
+         if (normC(compDb) !== normC(compXls)) diff.push('COMPETÊNCIA');
+      }
+
+      if (cleanStr(match.formaPagamento) !== cleanStr(item.formaPagamento)) diff.push('FORMA PGTO');
+      if (cleanStr(match.chavePixBoleto) !== cleanStr(item.chavePixBoleto)) diff.push('CHAVE PIX/BOLETO');
+
+      if (diff.length > 0) {
+          // Log para depuração se necessário (remover em prod se spammar muito)
+          console.debug(`Diff detectado para ID ${item.id}:`, diff);
+          return { data: item, status: 'CHANGED' as const, diff };
+      }
       return { data: item, status: 'UNCHANGED' as const };
     });
   }
@@ -451,7 +525,7 @@ export class FinanceService {
         valor_documento: s.data.valorDocumento,
         saldo: s.data.saldo,
         situacao: s.data.situacao,
-        numero_documento: s.data.numeroDocumento,
+        numero_documento: s.data.numeroDocumento, // Corrected to camelCase
         categoria: s.data.categoria,
         historico: s.data.historico,
         valor_pago: s.data.valorPago,

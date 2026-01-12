@@ -12,7 +12,8 @@ export type ViewType =
   | 'CATALOGO_MESTRE' 
   | 'GESTAO_USUARIOS' 
   | 'LANCAMENTO_RECEBER'
-  | 'INADIMPLENCIA' // Nova View
+  | 'INADIMPLENCIA' 
+  | 'CONTAS_PAGAR' // Nova View
   | 'CONFIGURACOES'
   | 'MOVEMENTS_LIST';
 

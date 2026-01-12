@@ -6,12 +6,13 @@ import { DebtorInfo, User, AccountsReceivable, CollectionHistory, Settlement } f
 import { ICONS } from '../constants';
 import Toast from './Toast';
 
-type MainTab = 'CARTEIRA' | 'ACORDOS';
+type MainTab = 'CARTEIRA' | 'ACORDOS' | 'LOGS';
 
 const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }) => {
   const [activeMainTab, setActiveMainTab] = useState<MainTab>('CARTEIRA');
   const [debtors, setDebtors] = useState<DebtorInfo[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [globalLogs, setGlobalLogs] = useState<CollectionHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [toast, setToast] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
@@ -54,12 +55,14 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [debtorData, settlementData] = await Promise.all([
+      const [debtorData, settlementData, logsData] = await Promise.all([
         DataService.getDebtorsSummary(),
-        FinanceService.getSettlements()
+        FinanceService.getSettlements(),
+        FinanceService.getAllCollectionLogs()
       ]);
       setDebtors(debtorData);
       setSettlements(settlementData);
+      setGlobalLogs(logsData);
     } catch (e) {
       setToast({ msg: 'Erro ao carregar dados financeiros.', type: 'error' });
     } finally {
@@ -425,6 +428,15 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
     return settlementDetails.installments.every(i => i.situacao === 'PAGO');
   }, [settlementDetails]);
 
+  // Filtragem para o Log Geral
+  const filteredLogs = useMemo(() => {
+    return globalLogs.filter(l => 
+        l.cliente.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        l.usuario.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        l.acao_tomada.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [globalLogs, searchTerm]);
+
   const DebtorCard: React.FC<{ d: DebtorInfo }> = ({ d }) => (
     <div className="bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm hover:border-blue-300 transition-all group flex flex-col xl:flex-row justify-between items-center gap-6">
        <div className="flex-1 w-full xl:w-auto">
@@ -495,6 +507,12 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                  >
                    Gestão de Acordos
                  </button>
+                 <button 
+                  onClick={() => setActiveMainTab('LOGS')}
+                  className={`px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${activeMainTab === 'LOGS' ? 'bg-purple-600 text-white shadow-lg' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'}`}
+                 >
+                   Log Cobrança
+                 </button>
               </div>
             </div>
             
@@ -541,7 +559,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                 </section>
               )}
             </div>
-          ) : (
+          ) : activeMainTab === 'ACORDOS' ? (
             <div className="space-y-12">
                <section className="space-y-6">
                   <h3 className="text-xl font-black text-slate-900 uppercase italic tracking-tighter flex items-center gap-3">
@@ -610,6 +628,70 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                      </table>
                   </div>
                </section>
+            </div>
+          ) : (
+            <div className="space-y-6">
+                <div className="table-container shadow-none border border-slate-100 bg-white rounded-[2rem]">
+                    <table className="w-full">
+                        <thead className="bg-[#0F172A]">
+                            <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                <th className="px-6 py-5 text-left">Data / Hora</th>
+                                <th className="px-6 py-5 text-left">Cliente</th>
+                                <th className="px-6 py-5 text-center">Ação</th>
+                                <th className="px-6 py-5 text-right">Valor Negociado</th>
+                                <th className="px-6 py-5 text-left">Operador</th>
+                                <th className="px-6 py-5 text-left">Detalhamento</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {filteredLogs.length > 0 ? filteredLogs.map(log => {
+                                let actionClass = 'bg-slate-100 text-slate-500 border-slate-200';
+                                if (log.acao_tomada === 'ACORDO') actionClass = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                                else if (log.acao_tomada === 'CARTORIO') actionClass = 'bg-slate-900 text-white border-slate-900';
+                                else if (log.acao_tomada === 'Agendamento') actionClass = 'bg-blue-50 text-blue-600 border-blue-100';
+                                else if (log.acao_tomada === 'RETIRADA_CARTORIO') actionClass = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                                else if (['Tentativa', 'Sem Retorno'].includes(log.acao_tomada)) actionClass = 'bg-amber-50 text-amber-600 border-amber-100';
+
+                                return (
+                                    <tr key={log.id} className="hover:bg-slate-50 transition-all group">
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-col">
+                                                <span className="text-[11px] font-black text-slate-900 leading-none">{new Date(log.data_registro).toLocaleDateString('pt-BR')}</span>
+                                                <span className="text-[9px] font-bold text-slate-400 mt-1 uppercase">{new Date(log.data_registro).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className="text-[10px] font-black text-slate-800 uppercase italic truncate max-w-[200px] block">{log.cliente}</span>
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
+                                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${actionClass}`}>
+                                                {log.acao_tomada}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                            {log.valor_devido ? (
+                                                <span className="text-[11px] font-black text-slate-900 italic">R$ {Number(log.valor_devido).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                                            ) : <span className="text-slate-300">-</span>}
+                                        </td>
+                                        <td className="px-6 py-4 text-left">
+                                            <span className="text-[9px] font-black text-blue-600 uppercase">@{log.usuario.split('@')[0]}</span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <p className="text-[9px] font-medium text-slate-500 uppercase leading-relaxed max-w-sm italic">"{log.observacao}"</p>
+                                            {log.data_proxima_acao && (
+                                                <p className="text-[8px] font-black text-amber-600 uppercase mt-1">Próx. Ação: {new Date(log.data_proxima_acao).toLocaleDateString('pt-BR')}</p>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            }) : (
+                                <tr>
+                                    <td colSpan={6} className="py-20 text-center opacity-30 font-black uppercase text-[10px] italic">Nenhuma ação registrada no histórico global.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
           )}
         </>
@@ -762,7 +844,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                        <button 
                          onClick={() => setIsReviewing(true)} 
                          disabled={selectedForAgreement.length === 0} 
-                         className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl hover:bg-blue-50 disabled:opacity-30 transition-all italic"
+                         className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl hover:bg-blue-500 disabled:opacity-30 transition-all italic"
                        >
                          Revisar Condições →
                        </button>

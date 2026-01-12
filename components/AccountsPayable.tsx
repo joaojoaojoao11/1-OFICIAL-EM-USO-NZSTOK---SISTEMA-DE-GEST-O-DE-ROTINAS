@@ -14,6 +14,7 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [toast, setToast] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
+  const [showImportInstructions, setShowImportInstructions] = useState(false); // Novo estado
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchItems = async () => {
@@ -26,6 +27,41 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
   useEffect(() => {
     fetchItems();
   }, []);
+
+  const downloadTemplate = () => {
+    const headers = [
+      "ID", 
+      "Fornecedor", 
+      "Data Emissão", 
+      "Data Vencimento", 
+      "Data Liquidação", 
+      "Valor Documento", 
+      "Valor Pago",
+      "Saldo", 
+      "Situação", 
+      "Número Documento", 
+      "Categoria", 
+      "Histórico", 
+      "Competência", 
+      "Forma Pagamento", 
+      "Chave PIX/Código Boleto"
+    ];
+
+    const data = [
+      headers,
+      ["AUTO", "EXEMPLO FORNECEDOR LTDA", "2024-01-01", "2024-01-30", "", 1500.50, 0, 1500.50, "ABERTO", "NF-12345", "SERVIÇOS", "MANUTENÇÃO PÁTIO", "01/2024", "BOLETO", "34191.79001..."]
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Modelo_Importacao_CP");
+    
+    // Ajuste de largura das colunas
+    ws['!cols'] = headers.map(() => ({ wch: 20 }));
+
+    XLSX.writeFile(wb, "Modelo_Contas_Pagar_NZERP.xlsx");
+    setToast({ msg: 'Modelo baixado com sucesso!', type: 'success' });
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -116,6 +152,15 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
               item[key] = parseSafeDate(val);
             } else if (key.includes('valor') || key === 'saldo') {
               item[key] = parseSafeValue(val);
+            } else if (key === 'competencia') {
+              // Tratamento Especial para Competência
+              if (val instanceof Date) {
+                const m = String(val.getMonth() + 1).padStart(2, '0');
+                const y = val.getFullYear();
+                item[key] = `${m}/${y}`;
+              } else {
+                item[key] = String(val || '').trim();
+              }
             } else {
               item[key] = String(val || '').trim();
             }
@@ -135,7 +180,9 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
 
         console.log(`NZ Pay: ${rawItems.length} itens identificados.`);
         const stagingResult = await DataService.processAPStaging(rawItems);
-        setStaging(stagingResult);
+        
+        setShowImportInstructions(false); // Fecha o modal de instruções
+        setStaging(stagingResult); // Abre o modal de staging (revisão)
 
       } catch (err: any) {
         setToast({ msg: err.message, type: 'error' });
@@ -177,6 +224,22 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
     );
   }, [data, searchTerm]);
 
+  // Ordenação do Staging: Novos primeiro, depois Alterados
+  const sortedStaging = useMemo(() => {
+    if (!staging) return [];
+    return [...staging].sort((a, b) => {
+      // Prioridade 1: Status NEW
+      if (a.status === 'NEW' && b.status !== 'NEW') return -1;
+      if (a.status !== 'NEW' && b.status === 'NEW') return 1;
+      
+      // Prioridade 2: Status CHANGED
+      if (a.status === 'CHANGED' && b.status === 'UNCHANGED') return -1;
+      if (a.status === 'UNCHANGED' && b.status === 'CHANGED') return 1;
+      
+      return 0;
+    });
+  }, [staging]);
+
   if (loading) return <div className="p-20 text-center opacity-30 font-black uppercase text-xs italic animate-pulse">Consultando Posição Financeira...</div>;
 
   return (
@@ -202,11 +265,11 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
               />
            </div>
            <button 
-             onClick={() => fileInputRef.current?.click()}
+             onClick={() => setShowImportInstructions(true)}
              className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg hover:bg-blue-600 transition-all flex items-center space-x-2 italic shrink-0"
            >
               <ICONS.Upload className="w-3.5 h-3.5" />
-              <span>{isProcessing ? 'Lendo...' : 'Importar Olist'}</span>
+              <span>Importar Olist</span>
            </button>
            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xls,.xlsx,.csv" className="hidden" />
         </div>
@@ -218,19 +281,19 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
             <tr>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left sticky left-0 z-30">ID</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Fornecedor</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Emissão</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Vencimento</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Liquidação</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-right">Valor Doc.</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Data Emissão</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Data Vencimento</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Data Liquidação</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-right">Valor documento</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-right">Pago</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-right">Saldo</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-center">Situação</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Nº Documento</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Número documento</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Categoria</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Histórico</th>
               <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Competência</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Forma Pgto</th>
-              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Chave / Pix</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Forma Pagamento</th>
+              <th className="bg-slate-50 text-slate-400 font-black uppercase text-[9px] tracking-widest px-6 py-4 border-b border-slate-200 text-left">Chave PIX/Código boleto</th>
             </tr>
           </thead>
           <tbody>
@@ -282,9 +345,75 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
         )}
       </div>
 
+      {/* MODAL DE INSTRUÇÕES DE IMPORTAÇÃO */}
+      {showImportInstructions && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-300">
+           <div className="bg-white max-w-2xl w-full rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col border border-slate-100">
+              <div className="px-10 py-8 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                 <div>
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Importação de Títulos</h3>
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-2 italic">Guia Rápido de Sincronização</p>
+                 </div>
+                 <button onClick={() => setShowImportInstructions(false)} className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-500 transition-all">
+                    <ICONS.Add className="w-5 h-5 rotate-45" />
+                 </button>
+              </div>
+              
+              <div className="p-10 space-y-8">
+                 <div className="bg-blue-50 p-6 rounded-[2rem] border border-blue-100 flex gap-4">
+                    <div className="p-3 bg-white rounded-xl h-fit text-blue-600 shadow-sm"><ICONS.Upload className="w-5 h-5" /></div>
+                    <div>
+                       <h4 className="text-[11px] font-black text-blue-700 uppercase mb-2">Estrutura do Arquivo</h4>
+                       <p className="text-xs text-blue-800/80 leading-relaxed font-medium">
+                          Para garantir a integridade dos dados, utilize nossa planilha modelo padronizada. O sistema identifica automaticamente colunas como 
+                          <span className="font-bold mx-1">Fornecedor</span>, 
+                          <span className="font-bold mx-1">Vencimento</span>, 
+                          <span className="font-bold mx-1">Valor</span> e 
+                          <span className="font-bold mx-1">Situação</span>.
+                       </p>
+                    </div>
+                 </div>
+
+                 <div className="space-y-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 italic">Ações Disponíveis</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       <button 
+                         onClick={downloadTemplate}
+                         className="p-6 bg-slate-50 border border-slate-200 rounded-[2rem] text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-all group"
+                       >
+                          <div className="flex items-center justify-between mb-3">
+                             <div className="p-2 bg-white rounded-lg shadow-sm group-hover:text-emerald-600 transition-colors">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                             </div>
+                             <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest group-hover:text-emerald-400">Passo 1</span>
+                          </div>
+                          <p className="text-sm font-black text-slate-700 uppercase italic group-hover:text-emerald-800">Baixar Modelo .XLSX</p>
+                          <p className="text-[9px] text-slate-400 mt-1 font-medium">Planilha com colunas corretas</p>
+                       </button>
+
+                       <button 
+                         onClick={() => fileInputRef.current?.click()}
+                         className="p-6 bg-slate-900 border border-slate-900 rounded-[2rem] text-left hover:bg-blue-600 hover:border-blue-600 transition-all group shadow-xl"
+                       >
+                          <div className="flex items-center justify-between mb-3">
+                             <div className="p-2 bg-white/10 rounded-lg text-white group-hover:bg-white/20 transition-colors">
+                                <ICONS.Upload className="w-5 h-5" />
+                             </div>
+                             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest group-hover:text-blue-200">Passo 2</span>
+                          </div>
+                          <p className="text-sm font-black text-white uppercase italic">Selecionar Arquivo</p>
+                          <p className="text-[9px] text-slate-400 mt-1 font-medium group-hover:text-blue-100">Carregar dados preenchidos</p>
+                       </button>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
+
       {/* MODAL DE VALIDAÇÃO (STAGING) */}
       {staging && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-300">
            <div className="bg-white max-w-6xl w-full rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col h-[85vh]">
               <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                  <div>
@@ -309,7 +438,7 @@ const AccountsPayableModule: React.FC<{ currentUser: User }> = ({ currentUser })
                        </tr>
                     </thead>
                     <tbody>
-                       {staging.map((row, i) => (
+                       {sortedStaging.map((row, i) => (
                           <tr key={i} className={`group transition-all ${row.status === 'NEW' ? 'bg-emerald-50/40' : row.status === 'CHANGED' ? 'bg-blue-50/40' : 'opacity-50'}`}>
                              <td className="px-6 py-3 first:rounded-l-2xl">
                                 <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border ${

@@ -16,7 +16,8 @@ import AuditInventoryForm from './components/AuditInventoryForm';
 import Settings from './components/Settings';
 import HistoryHub from './components/HistoryHub';
 import MovementsList from './components/MovementsList'; 
-import AccountsReceivableForm from './components/AccountsReceivableForm'; // Importar novo componente
+import AccountsReceivableForm from './components/AccountsReceivableForm'; 
+import AccountsPayableModule from './components/AccountsPayable'; // Importar novo componente
 
 // Interface para o estado do Error Boundary
 interface AppErrorBoundaryState {
@@ -152,6 +153,7 @@ const App: React.FC = () => {
         // Módulos Financeiros
         case 'LANCAMENTO_RECEBER': return <AccountsReceivableForm user={currentUser} onSuccess={() => {}} mode="LISTA" />;
         case 'INADIMPLENCIA': return <AccountsReceivableForm user={currentUser} onSuccess={() => {}} mode="INADIMPLENCIA" />;
+        case 'CONTAS_PAGAR': return <AccountsPayableModule currentUser={currentUser} />;
 
         // Sistema
         case 'GESTAO_USUARIOS': return <UserManagement admin={currentUser} />;
@@ -191,6 +193,7 @@ const App: React.FC = () => {
               <>
                 {hasAccess('LANCAMENTO_RECEBER') && <button onClick={() => navigate('LANCAMENTO_RECEBER')} className={`text-[10px] font-black uppercase tracking-widest transition-colors ${currentView === 'LANCAMENTO_RECEBER' ? 'text-white' : 'text-slate-400 hover:text-white'}`}>Contas a Receber</button>}
                 {hasAccess('INADIMPLENCIA') && <button onClick={() => navigate('INADIMPLENCIA')} className={`text-[10px] font-black uppercase tracking-widest transition-colors ${currentView === 'INADIMPLENCIA' ? 'text-white' : 'text-slate-400 hover:text-white'}`}>Inadimplência</button>}
+                {hasAccess('CONTAS_PAGAR') && <button onClick={() => navigate('CONTAS_PAGAR')} className={`text-[10px] font-black uppercase tracking-widest transition-colors ${currentView === 'CONTAS_PAGAR' ? 'text-white' : 'text-slate-400 hover:text-white'}`}>Contas a Pagar</button>}
               </>
             )}
             
