@@ -140,7 +140,25 @@ export class DataService {
   static async setAuditLock(lock: any): Promise<void> { }
 
   static async getDebtorsSummary(): Promise<DebtorInfo[]> {
+    // 1. Busca Títulos
     const ar = await this.getAccountsReceivable();
+    
+    // 2. Busca Histórico de Cobrança para identificar agendamentos
+    const { data: historyData } = await supabase
+        .from('collection_history')
+        .select('cliente, data_proxima_acao')
+        .order('data_registro', { ascending: false });
+
+    // Mapa de última data de ação por cliente
+    const nextActionMap: Record<string, string> = {};
+    if (historyData) {
+        historyData.forEach((h: any) => {
+            if (!nextActionMap[h.cliente] && h.data_proxima_acao) {
+                nextActionMap[h.cliente] = h.data_proxima_acao;
+            }
+        });
+    }
+
     const today = new Date(); today.setHours(0,0,0,0);
     const debtorsMap: Record<string, DebtorInfo> = {};
     
@@ -153,11 +171,12 @@ export class DataService {
           totalVencido: 0, 
           vencidoAte15d: 0, 
           vencidoMais15d: 0, 
-          enviarCartorio: 0, // Agora armazena valor em cartório
+          enviarCartorio: 0, 
           qtdTitulos: 0, 
           statusCobranca: 'PENDENTE', 
           protocoloAtual: `COB-${Date.now().toString().slice(-6)}`, 
-          enviadoCartorio: false 
+          enviadoCartorio: false,
+          nextActionDate: nextActionMap[t.cliente] // Associa a data encontrada
         };
       }
       

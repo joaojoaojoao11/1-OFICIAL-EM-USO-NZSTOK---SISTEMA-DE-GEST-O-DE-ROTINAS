@@ -215,6 +215,7 @@ export interface DebtorInfo {
   statusCobranca: string;
   protocoloAtual: string;
   enviadoCartorio: boolean;
+  nextActionDate?: string; // Data da próxima ação agendada (se houver)
 }
 
 export interface PaymentGroup {

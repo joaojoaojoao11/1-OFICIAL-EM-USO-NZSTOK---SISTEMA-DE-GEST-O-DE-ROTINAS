@@ -396,8 +396,25 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
     }
   };
 
-  const filteredDebtors = useMemo(() => {
-    return debtors.filter(d => d.cliente.toLowerCase().includes(searchTerm.toLowerCase()));
+  // Separação em dois grupos: A Cobrar (Urgente) vs Em Dia (Agendados)
+  const { toCollect, upToDate } = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const filtered = debtors.filter(d => d.cliente.toLowerCase().includes(searchTerm.toLowerCase()));
+    
+    const toCollectList: DebtorInfo[] = [];
+    const upToDateList: DebtorInfo[] = [];
+
+    filtered.forEach(d => {
+        // Se não tem data agendada OU se a data é hoje/passado -> A Cobrar
+        if (!d.nextActionDate || d.nextActionDate <= today) {
+            toCollectList.push(d);
+        } else {
+            // Se tem data futura -> Em Dia
+            upToDateList.push(d);
+        }
+    });
+
+    return { toCollect: toCollectList, upToDate: upToDateList };
   }, [debtors, searchTerm]);
 
   const activeSettlements = useMemo(() => settlements.filter(s => s.status === 'ATIVO'), [settlements]);
@@ -407,6 +424,48 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
     if (!settlementDetails || settlementDetails.installments.length === 0) return false;
     return settlementDetails.installments.every(i => i.situacao === 'PAGO');
   }, [settlementDetails]);
+
+  const DebtorCard: React.FC<{ d: DebtorInfo }> = ({ d }) => (
+    <div className="bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm hover:border-blue-300 transition-all group flex flex-col xl:flex-row justify-between items-center gap-6">
+       <div className="flex-1 w-full xl:w-auto">
+          <div className="flex items-center gap-3 mb-1">
+             <h3 className="font-black text-slate-900 uppercase italic text-lg tracking-tight">{d.cliente}</h3>
+             {d.vencidoMais15d > 0 && <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest animate-pulse border border-red-100">Risco Alto</span>}
+             {d.nextActionDate && d.nextActionDate > new Date().toISOString().split('T')[0] && (
+               <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest border border-blue-100">
+                 Agendado: {new Date(d.nextActionDate).toLocaleDateString('pt-BR')}
+               </span>
+             )}
+          </div>
+          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{d.qtdTitulos} Títulos em aberto</p>
+       </div>
+       
+       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center items-center w-full xl:w-auto">
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 min-w-[100px]">
+             <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Vencido</p>
+             <p className="text-sm font-black text-slate-900 italic">R$ {d.totalVencido.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
+          </div>
+          <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 min-w-[100px]">
+             <p className="text-[7px] font-black text-amber-600 uppercase tracking-widest mb-1">0 a 15 Dias</p>
+             <p className="text-sm font-black text-amber-700 italic">R$ {d.vencidoAte15d.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
+          </div>
+          <div className="bg-red-50 p-3 rounded-2xl border border-red-100 min-w-[100px]">
+             <p className="text-[7px] font-black text-red-600 uppercase tracking-widest mb-1">15+ Dias</p>
+             <p className="text-sm font-black text-red-700 italic">R$ {d.vencidoMais15d.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
+          </div>
+          <div className="bg-slate-900 p-3 rounded-2xl border border-slate-800 min-w-[100px] text-white">
+             <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">Em Cartório</p>
+             <p className="text-sm font-black text-white italic">R$ {(d.enviarCartorio || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
+          </div>
+          <button 
+            onClick={() => handleManageClient(d.cliente)}
+            className="px-6 py-4 bg-blue-600 text-white rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg italic h-full"
+          >
+            Gerenciar
+          </button>
+       </div>
+    </div>
+  );
 
   if (loading && !selectedClient && !viewingSettlement) return (
     <div className="py-20 text-center opacity-30 font-black uppercase text-xs italic animate-pulse">
@@ -452,53 +511,35 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
           </div>
 
           {activeMainTab === 'CARTEIRA' ? (
-            <div className="grid grid-cols-1 gap-4">
-              {filteredDebtors.map(d => (
-                <div key={d.cliente} className="bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm hover:border-blue-300 transition-all group flex flex-col xl:flex-row justify-between items-center gap-6">
-                   <div className="flex-1 w-full xl:w-auto">
-                      <div className="flex items-center gap-3 mb-1">
-                         <h3 className="font-black text-slate-900 uppercase italic text-lg tracking-tight">{d.cliente}</h3>
-                         {d.vencidoMais15d > 0 && <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest animate-pulse border border-red-100">Risco Alto</span>}
-                      </div>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{d.qtdTitulos} Títulos em aberto</p>
+            <div className="space-y-12">
+              {/* SEÇÃO 1: A COBRAR (PRIORIDADE) */}
+              <section>
+                 <h3 className="text-sm font-black text-red-500 uppercase tracking-widest flex items-center gap-2 mb-4 italic">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                    Prioridade: A Cobrar / Atrasados
+                 </h3>
+                 <div className="grid grid-cols-1 gap-4">
+                    {toCollect.map(d => <DebtorCard key={d.cliente} d={d} />)}
+                    {toCollect.length === 0 && (
+                       <div className="py-8 text-center border-2 border-dashed border-slate-100 rounded-[2rem] opacity-30 font-black uppercase text-[10px]">
+                          Nenhum cliente na fila de cobrança imediata.
+                       </div>
+                    )}
+                 </div>
+              </section>
+
+              {/* SEÇÃO 2: COBRANÇA EM DIA (AGENDADOS) */}
+              {upToDate.length > 0 && (
+                <section className="pt-8 border-t border-slate-200">
+                   <h3 className="text-sm font-black text-blue-500 uppercase tracking-widest flex items-center gap-2 mb-4 italic opacity-70">
+                      <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                      Cobrança em Dia / Agendados
+                   </h3>
+                   <div className="grid grid-cols-1 gap-4 opacity-80 hover:opacity-100 transition-opacity">
+                      {upToDate.map(d => <DebtorCard key={d.cliente} d={d} />)}
                    </div>
-                   
-                   {/* Grid de Detalhamento Financeiro */}
-                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center items-center w-full xl:w-auto">
-                      {/* 1. Total Vencido */}
-                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 min-w-[100px]">
-                         <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Vencido</p>
-                         <p className="text-sm font-black text-slate-900 italic">R$ {d.totalVencido.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                      </div>
-
-                      {/* 2. 0 a 15 Dias */}
-                      <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 min-w-[100px]">
-                         <p className="text-[7px] font-black text-amber-600 uppercase tracking-widest mb-1">0 a 15 Dias</p>
-                         <p className="text-sm font-black text-amber-700 italic">R$ {d.vencidoAte15d.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                      </div>
-
-                      {/* 3. 15+ Dias (Crítico) */}
-                      <div className="bg-red-50 p-3 rounded-2xl border border-red-100 min-w-[100px]">
-                         <p className="text-[7px] font-black text-red-600 uppercase tracking-widest mb-1">15+ Dias</p>
-                         <p className="text-sm font-black text-red-700 italic">R$ {d.vencidoMais15d.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                      </div>
-
-                      {/* 4. Em Cartório - NOVA COLUNA */}
-                      <div className="bg-slate-900 p-3 rounded-2xl border border-slate-800 min-w-[100px] text-white">
-                         <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">Em Cartório</p>
-                         <p className="text-sm font-black text-white italic">R$ {(d.enviarCartorio || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                      </div>
-
-                      {/* 5. Ação */}
-                      <button 
-                        onClick={() => handleManageClient(d.cliente)}
-                        className="px-6 py-4 bg-blue-600 text-white rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg italic h-full"
-                      >
-                        Gerenciar
-                      </button>
-                   </div>
-                </div>
-              ))}
+                </section>
+              )}
             </div>
           ) : (
             <div className="space-y-12">
@@ -721,7 +762,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                        <button 
                          onClick={() => setIsReviewing(true)} 
                          disabled={selectedForAgreement.length === 0} 
-                         className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl hover:bg-blue-500 disabled:opacity-30 transition-all italic"
+                         className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl hover:bg-blue-50 disabled:opacity-30 transition-all italic"
                        >
                          Revisar Condições →
                        </button>
