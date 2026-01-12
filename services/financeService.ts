@@ -139,13 +139,34 @@ export class FinanceService {
       });
       if (sError) throw sError;
 
-      // Zera o saldo e bloqueia os títulos originais
-      await supabase.from('accounts_receivable').update({ 
-        id_acordo: settlement.id, 
-        situacao: 'NEGOCIADO', 
-        saldo: 0,
-        status_cobranca: 'BLOQUEADO_ACORDO'
-      }).in('id', titleIds);
+      // Verifica status atual dos títulos para decidir o tipo de bloqueio
+      const { data: currentTitles } = await supabase.from('accounts_receivable').select('id, status_cobranca').in('id', titleIds);
+      
+      const cartorioIds = (currentTitles || [])
+        .filter((t: any) => t.status_cobranca === 'CARTORIO')
+        .map((t: any) => t.id);
+      
+      const normalIds = titleIds.filter(id => !cartorioIds.includes(id));
+
+      // Bloqueia títulos normais
+      if (normalIds.length > 0) {
+        await supabase.from('accounts_receivable').update({ 
+          id_acordo: settlement.id, 
+          situacao: 'NEGOCIADO', 
+          saldo: 0,
+          status_cobranca: 'BLOQUEADO_ACORDO'
+        }).in('id', normalIds);
+      }
+
+      // Bloqueia títulos de cartório (com status diferenciado para retorno futuro)
+      if (cartorioIds.length > 0) {
+        await supabase.from('accounts_receivable').update({ 
+          id_acordo: settlement.id, 
+          situacao: 'NEGOCIADO', 
+          saldo: 0,
+          status_cobranca: 'BLOQUEADO_CARTORIO'
+        }).in('id', cartorioIds);
+      }
 
       const parcelasItems = [];
       const valorParcela = settlement.valorAcordo / settlement.parcelas;
@@ -244,72 +265,6 @@ export class FinanceService {
     }
   }
 
-  static async cancelSettlement(settlementId: string, user: User): Promise<boolean> {
-    try {
-      if (!supabase) return false;
-      
-      // 1. Recuperar o Acordo
-      const { data: s, error: fError } = await supabase.from('settlements').select('*').eq('id', settlementId).single();
-      if (fError || !s) throw new Error("Acordo não localizado.");
-
-      const idsOriginais: string[] = s.titulos_negociados || [];
-
-      // 2. Buscar TODOS os itens vinculados ao acordo no contas a receber
-      const { data: relatedItems, error: rError } = await supabase
-        .from('accounts_receivable')
-        .select('*')
-        .eq('id_acordo', settlementId);
-
-      if (rError) throw rError;
-
-      // 3. Separar Parcelas vs Originais
-      // Robustez: Usa lista de IDs E status de cobrança para diferenciar
-      const originals = relatedItems.filter(i => 
-        idsOriginais.includes(i.id) || 
-        i.status_cobranca === 'BLOQUEADO_ACORDO'
-      );
-      const originalIds = originals.map(i => i.id);
-      const installments = relatedItems.filter(i => !originalIds.includes(i.id));
-
-      // 4. CANCELAR AS PARCELAS (Manter na base, mas mudar status)
-      if (installments.length > 0) {
-        const instIds = installments.map(i => i.id);
-        const { error: cancelError } = await supabase.from('accounts_receivable')
-          .update({
-              situacao: 'CANCELADO',
-              saldo: 0,
-              status_cobranca: 'NAO_COBRAVEL'
-          })
-          .in('id', instIds);
-        
-        if (cancelError) throw cancelError;
-      }
-
-      // 5. RESTAURAR TÍTULOS ORIGINAIS (Desbloquear)
-      const today = new Date().toISOString().split('T')[0];
-      
-      for (const orig of originals) {
-        const isOverdue = orig.data_vencimento && orig.data_vencimento < today;
-        await supabase.from('accounts_receivable').update({
-          situacao: isOverdue ? 'VENCIDO' : 'ABERTO',
-          saldo: Number(orig.valor_documento), // Restaura o saldo total original
-          status_cobranca: 'COBRAVEL', // Habilita novamente para cobrança
-          id_acordo: null // Remove o vínculo com o acordo
-        }).eq('id', orig.id);
-      }
-
-      // 6. ATUALIZAR STATUS DO ACORDO PARA HISTÓRICO
-      const { error: updError } = await supabase.from('settlements').update({ status: 'CANCELADO' }).eq('id', settlementId);
-      if (updError) throw updError;
-
-      await this.saveFinancialLog(user, 'CANCELAMENTO_ACORDO', s.cliente, `Acordo ${settlementId} cancelado. Parcelas anuladas e originais restaurados.`, s.valor_acordo);
-      return true;
-    } catch (e: any) {
-      console.error("NZERP Cancel Error:", e.message);
-      return false;
-    }
-  }
-
   static async deleteSettlement(settlementId: string, user: User): Promise<boolean> {
     try {
       if (!supabase) return false;
@@ -328,7 +283,8 @@ export class FinanceService {
 
       const originals = relatedItems.filter(i => 
         idsOriginais.includes(i.id) || 
-        i.status_cobranca === 'BLOQUEADO_ACORDO'
+        i.status_cobranca === 'BLOQUEADO_ACORDO' ||
+        i.status_cobranca === 'BLOQUEADO_CARTORIO'
       );
       const originalIds = originals.map(i => i.id);
       const installments = relatedItems.filter(i => !originalIds.includes(i.id));
@@ -343,15 +299,19 @@ export class FinanceService {
         if (delPartsError) throw delPartsError;
       }
 
-      // 5. RESTAURAR TÍTULOS ORIGINAIS (Igual ao Cancelar)
+      // 5. RESTAURAR TÍTULOS ORIGINAIS
       const today = new Date().toISOString().split('T')[0];
 
       for (const orig of originals) {
         const isOverdue = orig.data_vencimento && orig.data_vencimento < today;
+        const wasInCartorio = orig.status_cobranca === 'BLOQUEADO_CARTORIO';
+
         await supabase.from('accounts_receivable').update({
-          situacao: isOverdue ? 'VENCIDO' : 'ABERTO',
+          // Se estava em cartório, volta para situação 'EM CARTORIO', senão 'VENCIDO'/'ABERTO'
+          situacao: wasInCartorio ? 'EM CARTORIO' : (isOverdue ? 'VENCIDO' : 'ABERTO'),
           saldo: Number(orig.valor_documento),
-          status_cobranca: 'COBRAVEL',
+          // Restaura status: se era BLOQUEADO_CARTORIO volta para CARTORIO, senão COBRAVEL
+          status_cobranca: wasInCartorio ? 'CARTORIO' : 'COBRAVEL',
           id_acordo: null
         }).eq('id', orig.id);
       }
@@ -360,7 +320,7 @@ export class FinanceService {
       const { error: delContractError } = await supabase.from('settlements').delete().eq('id', settlementId);
       if (delContractError) throw delContractError;
 
-      await this.saveFinancialLog(user, 'EXCLUSAO_ACORDO', s.cliente, `Acordo ${settlementId} EXCLUÍDO. Parcelas deletadas e originais restaurados.`, s.valor_acordo);
+      await this.saveFinancialLog(user, 'EXCLUSAO_ACORDO', s.cliente, `Acordo ${settlementId} EXCLUÍDO. Parcelas deletadas e originais restaurados ao status original.`, s.valor_acordo);
       return true;
     } catch (e: any) {
       console.error("NZERP Delete Error:", e.message);
@@ -415,7 +375,9 @@ export class FinanceService {
 
     // 3. Separação correta usando a lista de IDs + Status Cobrança para robustez
     const originals = allRelated.filter(i => 
-        idsOriginais.includes(i.id) || i.status_cobranca === 'BLOQUEADO_ACORDO'
+        idsOriginais.includes(i.id) || 
+        i.status_cobranca === 'BLOQUEADO_ACORDO' ||
+        i.status_cobranca === 'BLOQUEADO_CARTORIO'
     ).map(mapper);
     
     const originalIds = originals.map(i => i.id);

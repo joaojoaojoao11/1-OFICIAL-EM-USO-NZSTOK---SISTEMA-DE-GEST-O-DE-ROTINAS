@@ -605,9 +605,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {clientTitles.length > 0 ? clientTitles.map(t => {
                             // Bloqueio apenas se estiver em OUTRO acordo (não bloqueia 'CARTORIO' para negociação, apenas se não for acordo)
-                            // Se for acordo, t.id_acordo existe.
-                            // Mas t.statusCobranca === 'BLOQUEADO_ACORDO' é o que define.
-                            const isBlocked = t.statusCobranca === 'BLOQUEADO_ACORDO'; 
+                            const isBlocked = t.statusCobranca === 'BLOQUEADO_ACORDO' || t.statusCobranca === 'BLOQUEADO_CARTORIO';
                             const days = calculateDaysOverdue(t.data_vencimento);
                             const isSelected = selectedForAgreement.includes(t.id);
                             const canSelect = isNegotiating || isNotarySelection || isNotaryRemoval;
@@ -648,6 +646,8 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                                      <p className="font-black text-slate-900 text-sm italic">R$ {(t.valor_documento || t.saldo).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
                                      {t.statusCobranca === 'CARTORIO' ? (
                                         <span className="text-[7px] font-black text-white bg-slate-900 px-2 py-0.5 rounded uppercase italic">EM CARTÓRIO</span>
+                                     ) : t.statusCobranca === 'BLOQUEADO_CARTORIO' ? (
+                                        <span className="text-[7px] font-black text-slate-900 bg-slate-200 px-2 py-0.5 rounded uppercase italic">ACORDO (CARTÓRIO)</span>
                                      ) : isBlocked ? (
                                         <span className="text-[7px] font-black text-slate-400 uppercase italic">BLOQUEADO</span>
                                      ) : (
@@ -919,9 +919,13 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                              </div>
                              <div className="flex gap-4 items-center">
                                 <span>R$ {orig.valor_documento.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
-                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${orig.situacao === 'LIQUIDADO' ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white'}`}>
-                                  {orig.situacao === 'LIQUIDADO' ? 'LIQUIDADO' : 'Bloqueado'}
-                                </span>
+                                {orig.statusCobranca === 'BLOQUEADO_CARTORIO' ? (
+                                   <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase bg-slate-900 text-white">EM CARTÓRIO</span>
+                                ) : (
+                                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${orig.situacao === 'LIQUIDADO' ? 'bg-emerald-500 text-white' : 'bg-slate-300 text-white'}`}>
+                                     {orig.situacao === 'LIQUIDADO' ? 'LIQUIDADO' : 'Bloqueado'}
+                                   </span>
+                                )}
                              </div>
                           </div>
                        ))}
