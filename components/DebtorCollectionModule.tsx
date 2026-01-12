@@ -25,6 +25,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
   // Estados do Acordo (Settlement) & Cartório
   const [isNegotiating, setIsNegotiating] = useState(false);
   const [isNotarySelection, setIsNotarySelection] = useState(false);
+  const [isNotaryRemoval, setIsNotaryRemoval] = useState(false); // Novo estado para retirada
   const [isReviewing, setIsReviewing] = useState(false);
   const [selectedForAgreement, setSelectedForAgreement] = useState<string[]>([]);
   const [viewingSettlement, setViewingSettlement] = useState<Settlement | null>(null);
@@ -47,7 +48,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
   const [interactionForm, setInteractionForm] = useState({
     acao: 'WhatsApp',
     observacao: '',
-    proximaAcao: ''
+    proximaAcao: '' // Usado para data de agendamento ou retorno
   });
 
   const fetchData = async () => {
@@ -76,7 +77,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
       const clientHistoryData = await FinanceService.getCollectionHistoryByClient(cliente);
       const today = new Date().toISOString().split('T')[0];
       
-      // Filtro Rigoroso: Apenas BOLETOS VENCIDOS sem acordo ativo
+      // Filtro Rigoroso: Apenas BOLETOS VENCIDOS (incluindo Cartório) sem acordo ativo
       const filtered = allAR.filter(t => 
         t.cliente === cliente && 
         t.saldo > 0.01 && 
@@ -126,12 +127,54 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
     }
   };
 
-  const handleQuickAction = (actionType: 'AGENDAR' | 'RETORNOU' | 'SEM_RETORNO' | 'CARTORIO') => {
+  const handleRemoveFromCartorio = async () => {
+    if (selectedForAgreement.length === 0) return;
+    if (!window.confirm(`Confirma a retirada de ${selectedForAgreement.length} títulos do cartório?`)) return;
+
+    setIsSubmittingInteraction(true);
+    try {
+      const res = await FinanceService.removeTitlesFromNotary(selectedForAgreement, currentUser);
+      if (res.success) {
+        await FinanceService.addCollectionHistory({
+          cliente: selectedClient!,
+          acao_tomada: 'RETIRADA_CARTORIO',
+          observacao: `RETIRADA DE PROTESTO: ${selectedForAgreement.length} TÍTULOS. REVERTIDO PARA COBRANÇA.`,
+          data_proxima_acao: undefined,
+          valor_devido: totalSelectedForAgreement,
+          dias_atraso: 0,
+          usuario: currentUser.name
+        });
+        setToast({ msg: 'TÍTULOS RETIRADOS DO CARTÓRIO!', type: 'success' });
+        setIsNotaryRemoval(false);
+        setSelectedForAgreement([]);
+        fetchData();
+        setSelectedClient(null);
+      } else {
+        setToast({ msg: res.message || 'Erro ao processar retirada.', type: 'error' });
+      }
+    } catch (e) {
+      setToast({ msg: 'Erro de conexão.', type: 'error' });
+    } finally {
+      setIsSubmittingInteraction(false);
+    }
+  };
+
+  const handleQuickAction = (actionType: 'AGENDAR' | 'RETORNOU' | 'SEM_RETORNO' | 'CARTORIO' | 'RETIRAR_CARTORIO') => {
+    // Reset selection modes
+    setIsNegotiating(false);
+    setIsNotarySelection(false);
+    setIsNotaryRemoval(false);
+    setSelectedForAgreement([]);
+
     if (actionType === 'CARTORIO') {
       setIsNotarySelection(true);
-      setIsNegotiating(false);
-      setSelectedForAgreement([]);
       setToast({ msg: 'Selecione os títulos para envio.', type: 'success' });
+      return;
+    }
+
+    if (actionType === 'RETIRAR_CARTORIO') {
+      setIsNotaryRemoval(true);
+      setToast({ msg: 'Selecione os títulos para retirar.', type: 'success' });
       return;
     }
 
@@ -140,13 +183,13 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
 
     if (actionType === 'AGENDAR') {
       acao = 'Agendamento';
-      obs = 'CLIENTE PROMETEU PAGAMENTO PARA: ';
+      obs = 'CLIENTE PROMETEU PAGAMENTO';
     } else if (actionType === 'RETORNOU') {
       acao = 'Retorno';
-      obs = 'CLIENTE RETORNOU CONTATO: ';
+      obs = 'CLIENTE RETORNOU CONTATO';
     } else if (actionType === 'SEM_RETORNO') {
       acao = 'Tentativa';
-      obs = 'TENTATIVA DE CONTATO SEM SUCESSO.';
+      obs = 'TENTATIVA DE CONTATO SEM SUCESSO';
     }
 
     setInteractionForm({ acao, observacao: obs, proximaAcao: '' });
@@ -318,6 +361,13 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
     e.preventDefault();
     if (!selectedClient) return;
 
+    // Validação de Data Obrigatória
+    const needsDate = ['Agendamento', 'Retorno', 'Tentativa'].includes(interactionForm.acao);
+    if (needsDate && !interactionForm.proximaAcao) {
+        setToast({ msg: 'A data de agendamento/retorno é obrigatória.', type: 'error' });
+        return;
+    }
+
     setIsSubmittingInteraction(true);
     try {
       const totalDevido = clientTitles.reduce((acc, curr) => acc + curr.saldo, 0);
@@ -325,7 +375,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
         cliente: selectedClient,
         acao_tomada: interactionForm.acao,
         observacao: interactionForm.observacao,
-        data_proxima_acao: interactionForm.proximaAcao,
+        data_proxima_acao: interactionForm.proximaAcao, // Envia a data selecionada
         valor_devido: totalDevido,
         dias_atraso: clientTitles.length > 0 ? calculateDaysOverdue(clientTitles[0].data_vencimento) : 0, 
         usuario: currentUser.name
@@ -526,13 +576,13 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
         /* CRM DO CLIENTE */
         <div className="animate-in slide-in-from-right-4 duration-500 space-y-8">
            <div className="flex items-center justify-between">
-              <button onClick={() => { setSelectedClient(null); setIsNegotiating(false); setIsNotarySelection(false); setSelectedForAgreement([]); }} className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-colors font-black text-[10px] uppercase tracking-widest">
+              <button onClick={() => { setSelectedClient(null); setIsNegotiating(false); setIsNotarySelection(false); setIsNotaryRemoval(false); setSelectedForAgreement([]); }} className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-colors font-black text-[10px] uppercase tracking-widest">
                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" strokeWidth="3"/></svg>
                  Voltar para Fila
               </button>
               <div className="flex gap-3">
                  <button 
-                   onClick={() => { setIsNegotiating(!isNegotiating); setIsNotarySelection(false); setSelectedForAgreement([]); }}
+                   onClick={() => { setIsNegotiating(!isNegotiating); setIsNotarySelection(false); setIsNotaryRemoval(false); setSelectedForAgreement([]); }}
                    className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg flex items-center gap-2 italic transition-all ${isNegotiating ? 'bg-amber-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                  >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -546,18 +596,27 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                  <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden">
                     {isNegotiating && <div className="absolute top-0 left-0 w-full h-2 bg-blue-600 animate-pulse"></div>}
                     {isNotarySelection && <div className="absolute top-0 left-0 w-full h-2 bg-slate-900 animate-pulse"></div>}
+                    {isNotaryRemoval && <div className="absolute top-0 left-0 w-full h-2 bg-emerald-500 animate-pulse"></div>}
                     <h2 className="text-3xl font-black text-slate-900 uppercase italic tracking-tighter mb-8 leading-none">{selectedClient}</h2>
                     <div className="space-y-6">
                        <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest italic">
-                          {isNegotiating ? 'SELECIONE OS TÍTULOS PARA O ACORDO' : isNotarySelection ? 'SELECIONE TÍTULOS PARA CARTÓRIO' : 'DOSSIÊ FINANCEIRO'}
+                          {isNegotiating ? 'SELECIONE OS TÍTULOS PARA O ACORDO' : isNotarySelection ? 'SELECIONE TÍTULOS PARA CARTÓRIO' : isNotaryRemoval ? 'SELECIONE PARA RETIRAR DO CARTÓRIO' : 'DOSSIÊ FINANCEIRO'}
                        </p>
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {clientTitles.length > 0 ? clientTitles.map(t => {
-                            const isBlocked = t.statusCobranca === 'BLOQUEADO_ACORDO' || t.statusCobranca === 'CARTORIO';
+                            // Bloqueio apenas se estiver em OUTRO acordo (não bloqueia 'CARTORIO' para negociação, apenas se não for acordo)
+                            // Se for acordo, t.id_acordo existe.
+                            // Mas t.statusCobranca === 'BLOQUEADO_ACORDO' é o que define.
+                            const isBlocked = t.statusCobranca === 'BLOQUEADO_ACORDO'; 
                             const days = calculateDaysOverdue(t.data_vencimento);
                             const isSelected = selectedForAgreement.includes(t.id);
-                            const canSelect = isNegotiating || isNotarySelection;
+                            const canSelect = isNegotiating || isNotarySelection || isNotaryRemoval;
                             
+                            // Se estivermos removendo do cartório, só pode selecionar o que ESTÁ em cartório
+                            if (isNotaryRemoval && t.statusCobranca !== 'CARTORIO') return null;
+                            // Se estivermos enviando para cartório, não pode selecionar o que JÁ ESTÁ em cartório
+                            if (isNotarySelection && t.statusCobranca === 'CARTORIO') return null;
+
                             return (
                                <div 
                                  key={t.id} 
@@ -597,7 +656,7 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                                   </div>
                                </div>
                             );
-                          }) : (
+                          }).filter(Boolean) : (
                             <div className="col-span-full py-10 text-center opacity-30 italic font-black uppercase text-[10px]">
                                Nenhum boleto vencido encontrado para negociação.
                             </div>
@@ -618,7 +677,8 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                                   <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase border shadow-sm ${h.acao_tomada === 'ACORDO' ? 'bg-purple-50 text-purple-600' : h.acao_tomada === 'CARTORIO' ? 'bg-slate-900 text-white border-slate-900' : 'bg-blue-50 text-blue-600'}`}>{h.acao_tomada}</span>
                                </div>
                                <p className="text-[12px] font-bold text-slate-700 leading-relaxed group-hover:text-slate-900 transition-colors">"{h.observacao}"</p>
-                               <p className="text-[8px] font-black text-slate-400 uppercase italic">Operador: {h.usuario}</p>
+                               {h.data_proxima_acao && <p className="text-[8px] font-black text-amber-600 uppercase tracking-widest mt-1">Próxima Ação: {new Date(h.data_proxima_acao).toLocaleDateString('pt-BR')}</p>}
+                               <p className="text-[8px] font-black text-slate-400 uppercase italic mt-1">Operador: {h.usuario}</p>
                             </div>
                          </div>
                        )) : <div className="py-10 text-center opacity-20 italic font-black uppercase text-[10px]">Nenhum registro anterior</div>}
@@ -685,6 +745,25 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                          {isSubmittingInteraction ? 'Processando...' : 'Confirmar Envio'}
                        </button>
                     </div>
+                 ) : isNotaryRemoval ? (
+                    <div className="bg-emerald-800 p-8 rounded-[3rem] shadow-2xl text-white space-y-6 sticky top-24 border border-emerald-700">
+                        <div className="flex justify-between items-center border-b border-emerald-600 pb-4 mb-4">
+                           <h3 className="text-lg font-black uppercase italic tracking-tighter text-white">Retirar de Cartório</h3>
+                           <button onClick={() => { setIsNotaryRemoval(false); setSelectedForAgreement([]); }} className="text-[9px] font-black text-emerald-200 uppercase hover:underline">Cancelar</button>
+                        </div>
+                        <div className="p-6 bg-black/10 rounded-3xl border border-white/10 text-center">
+                          <p className="text-[9px] font-black text-emerald-200 uppercase tracking-widest mb-1">Total a Retirar</p>
+                          <h4 className="text-4xl font-black italic tracking-tighter text-white">R$ {totalSelectedForAgreement.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</h4>
+                          <p className="text-[9px] font-black text-emerald-200 uppercase tracking-widest mt-2">{selectedForAgreement.length} Títulos</p>
+                       </div>
+                       <button 
+                         onClick={handleRemoveFromCartorio} 
+                         disabled={selectedForAgreement.length === 0 || isSubmittingInteraction} 
+                         className="w-full py-5 bg-white text-emerald-800 rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl hover:bg-emerald-50 disabled:opacity-30 transition-all italic"
+                       >
+                         {isSubmittingInteraction ? 'Processando...' : 'Confirmar Retirada'}
+                       </button>
+                    </div>
                  ) : (
                     <div className="bg-slate-900 p-8 rounded-[3rem] shadow-2xl text-white space-y-6 sticky top-24">
                        <h3 className="text-lg font-black uppercase italic tracking-tighter text-blue-400 border-b border-white/10 pb-4 mb-4">Ações Rápidas CRM</h3>
@@ -702,6 +781,9 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                           <button onClick={() => handleQuickAction('CARTORIO')} className="p-4 bg-white text-slate-900 hover:bg-slate-200 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all text-center shadow-lg">
                              Enviar p/ Cartório
                           </button>
+                          <button onClick={() => handleQuickAction('RETIRAR_CARTORIO')} className="col-span-2 p-3 bg-slate-800 text-slate-400 border border-slate-700 hover:text-white hover:border-slate-500 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all text-center">
+                             Retirar do Cartório
+                          </button>
                        </div>
 
                        <div className="h-px bg-white/10 my-2"></div>
@@ -711,6 +793,24 @@ const DebtorCollectionModule: React.FC<{ currentUser: User }> = ({ currentUser }
                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Detalhes da Ocorrência</label>
                              <textarea required placeholder="RESUMO..." value={interactionForm.observacao} onChange={e => setInteractionForm({...interactionForm, observacao: e.target.value.toUpperCase()})} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-2xl outline-none font-medium text-xs uppercase h-24 resize-none" />
                           </div>
+                          
+                          {/* Campo de Data Condicional */}
+                          {['Agendamento', 'Retorno', 'Tentativa'].includes(interactionForm.acao) && (
+                             <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                                <label className="text-[9px] font-black text-blue-400 uppercase tracking-widest ml-2">
+                                   {interactionForm.acao === 'Agendamento' ? 'Data da Promessa *' : 'Próximo Contato *'}
+                                </label>
+                                <input 
+                                  type="date" 
+                                  required 
+                                  min={new Date().toISOString().split('T')[0]}
+                                  value={interactionForm.proximaAcao} 
+                                  onChange={e => setInteractionForm({...interactionForm, proximaAcao: e.target.value})} 
+                                  className="w-full px-4 py-3 bg-blue-600/20 border border-blue-500/50 rounded-2xl outline-none font-black text-xs uppercase text-white" 
+                                />
+                             </div>
+                          )}
+
                           <button type="submit" disabled={isSubmittingInteraction} className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest shadow-xl italic">Registrar Ocorrência</button>
                        </form>
                     </div>

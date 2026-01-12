@@ -523,4 +523,21 @@ export class FinanceService {
       return { success: false, message: e.message };
     }
   }
+
+  static async removeTitlesFromNotary(titleIds: string[], user: User): Promise<{ success: boolean; message?: string }> {
+    try {
+      if (!supabase) return { success: false, message: 'DB Offline' };
+      
+      // Retorna para situação padrão de cobrança (VENCIDO pois provavelmente está atrasado se estava em cartório)
+      const { error } = await supabase.from('accounts_receivable')
+        .update({ status_cobranca: 'COBRAVEL', situacao: 'VENCIDO' })
+        .in('id', titleIds);
+
+      if (error) throw error;
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  }
 }
