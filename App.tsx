@@ -206,15 +206,6 @@ const App: React.FC = () => {
             
           </div>
           
-          {/* Botão de Notificações - Novo */}
-          <button 
-            className="p-2.5 bg-slate-800 rounded-xl text-slate-400 hover:bg-slate-700 hover:text-white transition-all relative"
-            title="Notificações"
-          >
-            <ICONS.Notification className="w-5 h-5" />
-            <span className="absolute top-2 right-2.5 w-2 h-2 bg-red-500 rounded-full animate-pulse border border-slate-900"></span>
-          </button>
-
           {hasAccess('CONFIGURACOES') && (
             <button 
               onClick={() => navigate('CONFIGURACOES')} 

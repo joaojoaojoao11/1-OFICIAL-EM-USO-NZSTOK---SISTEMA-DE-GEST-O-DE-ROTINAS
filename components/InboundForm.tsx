@@ -31,11 +31,10 @@ const InboundForm: React.FC<{ user: User, onSuccess: () => void }> = ({ user, on
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const generateRandomLpn = () => {
-    // FIX: Aumentado para Timestamp (6) + Random (3) para garantir unicidade e evitar colisão no BD
-    // Formato final ex: NZ-849201552
-    const timestamp = Date.now().toString().slice(-6);
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `NZ-${timestamp}${random}`;
+    // Formato solicitado: NZ-XXXX (4 dígitos numéricos)
+    // Gera um número entre 1000 e 9999
+    const random = Math.floor(1000 + Math.random() * 9000).toString();
+    return `NZ-${random}`;
   };
 
   useEffect(() => {
@@ -183,7 +182,7 @@ const InboundForm: React.FC<{ user: User, onSuccess: () => void }> = ({ user, on
 
           const master = catalog.find(p => p.sku === item.sku);
           if (item.sku && master) {
-            // FIX: Usa a nova função de LPN para evitar colisão na importação em massa
+            // Usa a nova função de LPN com formato NZ-XXXX
             const lpn = generateRandomLpn();
             
             // LÓGICA DE NEGÓCIO PRINCIPAL:
@@ -265,7 +264,7 @@ const InboundForm: React.FC<{ user: User, onSuccess: () => void }> = ({ user, on
       <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tighter uppercase italic leading-none">Registrar Entrada</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2 italic">Geração Automática de LPN (9 Dígitos)</p>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2 italic">Geração Automática de LPN (NZ-XXXX)</p>
         </div>
         <button onClick={() => setIsImportModalOpen(true)} className="px-6 py-3 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg flex items-center space-x-2 italic">
           <ICONS.Upload className="w-4 h-4" />

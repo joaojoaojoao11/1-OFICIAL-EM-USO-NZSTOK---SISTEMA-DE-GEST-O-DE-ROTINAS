@@ -99,122 +99,132 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ currentUser, onSuccess 
         format: [3.94, 5.9]
       });
 
-      const pageWidth = 3.94;
-      let y = 0.2; // Margem superior inicial
+      const totalVolumes = parseInt(meta.volumes) || 1;
 
-      // 1. LOGO DA EMPRESA (Topo)
-      if (companySettings?.logoUrl) {
-        try {
-          // Ajusta tamanho da imagem mantendo proporção (max width 2in, max height 1in)
-          const imgProps = doc.getImageProperties(companySettings.logoUrl);
-          const ratio = imgProps.width / imgProps.height;
-          let imgWidth = 1.5; 
-          let imgHeight = imgWidth / ratio;
-          
-          if (imgHeight > 0.8) {
-            imgHeight = 0.8;
-            imgWidth = imgHeight * ratio;
+      // Loop para gerar uma página para cada volume
+      for (let currentVol = 1; currentVol <= totalVolumes; currentVol++) {
+        if (currentVol > 1) doc.addPage();
+
+        const pageWidth = 3.94;
+        let y = 0.2; // Margem superior inicial (resetada a cada página)
+
+        // 1. LOGO DA EMPRESA (Topo)
+        if (companySettings?.logoUrl) {
+          try {
+            // Ajusta tamanho da imagem mantendo proporção (max width 2in, max height 1in)
+            const imgProps = doc.getImageProperties(companySettings.logoUrl);
+            const ratio = imgProps.width / imgProps.height;
+            let imgWidth = 1.5; 
+            let imgHeight = imgWidth / ratio;
+            
+            if (imgHeight > 0.8) {
+              imgHeight = 0.8;
+              imgWidth = imgHeight * ratio;
+            }
+
+            const xCenter = (pageWidth - imgWidth) / 2;
+            doc.addImage(companySettings.logoUrl, 'PNG', xCenter, y, imgWidth, imgHeight);
+            y += imgHeight + 0.2;
+          } catch (e) {
+            // Fallback se imagem falhar: Texto
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text((companySettings.name || 'NZERP').substring(0, 15), pageWidth / 2, y + 0.3, { align: 'center' });
+            y += 0.5;
           }
-
-          const xCenter = (pageWidth - imgWidth) / 2;
-          doc.addImage(companySettings.logoUrl, 'PNG', xCenter, y, imgWidth, imgHeight);
-          y += imgHeight + 0.2;
-        } catch (e) {
-          // Fallback se imagem falhar: Texto
-          doc.setFontSize(14);
+        } else {
+          // Fallback sem logo configurado
+          doc.setFontSize(16);
           doc.setFont('helvetica', 'bold');
-          doc.text((companySettings.name || 'NZERP').substring(0, 15), pageWidth / 2, y + 0.3, { align: 'center' });
-          y += 0.5;
+          doc.text('NZ LOGÍSTICA', pageWidth / 2, y + 0.3, { align: 'center' });
+          y += 0.6;
         }
-      } else {
-        // Fallback sem logo configurado
-        doc.setFontSize(16);
-        doc.setFont('helvetica', 'bold');
-        doc.text('NZ LOGÍSTICA', pageWidth / 2, y + 0.3, { align: 'center' });
-        y += 0.6;
-      }
 
-      // Linha separadora
-      doc.setLineWidth(0.02);
-      doc.line(0.2, y, 3.74, y);
-      y += 0.2;
+        // Linha separadora
+        doc.setLineWidth(0.02);
+        doc.line(0.2, y, 3.74, y);
+        y += 0.2;
 
-      // 2. DADOS PRINCIPAIS - AGORA NF EM DESTAQUE
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text('NOTA FISCAL', 0.2, y); // Label Alterada
-      
-      y += 0.25;
-      doc.setFontSize(22);
-      doc.setTextColor(0);
-      doc.setFont('helvetica', 'bold');
-      // Valor da NF em destaque grande
-      doc.text(meta.notaFiscal || 'S/N', 0.2, y);
-      
-      // Pedido/Controle ao lado (secundário)
-      if (meta.pedido) {
+        // 2. DADOS PRINCIPAIS - AGORA NF EM DESTAQUE
         doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text('NOTA FISCAL', 0.2, y); // Label Alterada
+        
+        y += 0.25;
+        doc.setFontSize(22);
+        doc.setTextColor(0);
+        doc.setFont('helvetica', 'bold');
+        // Valor da NF em destaque grande
+        doc.text(meta.notaFiscal || 'S/N', 0.2, y);
+        
+        // Pedido/Controle ao lado (secundário)
+        if (meta.pedido) {
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'normal');
+          doc.text(`PED: ${meta.pedido}`, 3.74, y, { align: 'right' });
+        }
+
+        y += 0.3;
+
+        // 3. DESTINATÁRIO
+        doc.setFillColor(245, 245, 245);
+        doc.rect(0.2, y, 3.54, 0.6, 'F'); // Box background
+        
+        doc.setFontSize(8);
+        doc.setTextColor(100);
+        doc.text('DESTINATÁRIO / CLIENTE', 0.3, y + 0.15);
+        
+        doc.setFontSize(11);
+        doc.setTextColor(0);
+        doc.setFont('helvetica', 'bold');
+        // Quebra de linha se nome for muito longo
+        const splitName = doc.splitTextToSize(meta.cliente || 'CLIENTE BALCÃO', 3.3);
+        doc.text(splitName, 0.3, y + 0.35);
+        
+        y += 0.8;
+
+        // 4. TRANSPORTE E VOLUMES
+        doc.setFontSize(8);
+        doc.setTextColor(100);
         doc.setFont('helvetica', 'normal');
-        doc.text(`PED: ${meta.pedido}`, 3.74, y, { align: 'right' });
-      }
+        doc.text('TRANSPORTADORA', 0.2, y);
+        doc.text('VOLUMES', 2.5, y);
 
-      y += 0.3;
+        y += 0.2;
+        doc.setFontSize(12);
+        doc.setTextColor(0);
+        doc.setFont('helvetica', 'bold');
+        doc.text((meta.transportadora || 'RETIRA').substring(0, 18), 0.2, y);
+        
+        // Lógica de numeração de volumes: 1/2, 2/2 etc.
+        const volumeText = totalVolumes > 1 ? `${currentVol}/${totalVolumes}` : (meta.volumes || '1');
+        doc.text(volumeText, 2.5, y);
 
-      // 3. DESTINATÁRIO
-      doc.setFillColor(245, 245, 245);
-      doc.rect(0.2, y, 3.54, 0.6, 'F'); // Box background
-      
-      doc.setFontSize(8);
-      doc.setTextColor(100);
-      doc.text('DESTINATÁRIO / CLIENTE', 0.3, y + 0.15);
-      
-      doc.setFontSize(11);
-      doc.setTextColor(0);
-      doc.setFont('helvetica', 'bold');
-      // Quebra de linha se nome for muito longo
-      const splitName = doc.splitTextToSize(meta.cliente || 'CLIENTE BALCÃO', 3.3);
-      doc.text(splitName, 0.3, y + 0.35);
-      
-      y += 0.8;
+        y += 0.3;
+        doc.setLineWidth(0.01);
+        doc.line(0.2, y, 3.74, y);
+        y += 0.2;
 
-      // 4. TRANSPORTE E VOLUMES
-      doc.setFontSize(8);
-      doc.setTextColor(100);
-      doc.setFont('helvetica', 'normal');
-      doc.text('TRANSPORTADORA', 0.2, y);
-      doc.text('QTD. VOLUMES', 2.5, y);
+        // 5. LISTA DE ITENS (Resumida)
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text('ITENS CONFERIDOS:', 0.2, y);
+        y += 0.2;
 
-      y += 0.2;
-      doc.setFontSize(12);
-      doc.setTextColor(0);
-      doc.setFont('helvetica', 'bold');
-      doc.text((meta.transportadora || 'RETIRA').substring(0, 18), 0.2, y);
-      doc.text(meta.volumes || '1', 2.5, y);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        
+        items.forEach((item) => {
+          if (y > 5.5) return; // Evita estourar a página
+          const line = `[${item.lpn}] ${item.sku} - ${item.quantidade.toFixed(2)}m`;
+          doc.text(line, 0.2, y);
+          y += 0.15;
+        });
 
-      y += 0.3;
-      doc.setLineWidth(0.01);
-      doc.line(0.2, y, 3.74, y);
-      y += 0.2;
-
-      // 5. LISTA DE ITENS (Resumida)
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.text('ITENS CONFERIDOS:', 0.2, y);
-      y += 0.2;
-
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      
-      items.forEach((item) => {
-        if (y > 5.5) return; // Evita estourar a página
-        const line = `[${item.lpn}] ${item.sku} - ${item.quantidade.toFixed(2)}m`;
-        doc.text(line, 0.2, y);
-        y += 0.15;
-      });
-
-      if (items.length > 8 && y > 5.5) {
-         doc.setFontSize(7);
-         doc.text('... ver romaneio completo para mais itens.', 0.2, 5.7);
+        if (items.length > 8 && y > 5.5) {
+           doc.setFontSize(7);
+           doc.text('... ver romaneio completo para mais itens.', 0.2, 5.7);
+        }
       }
 
       // Salvar
