@@ -89,7 +89,9 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
 
       // 5. Filtro de Situação
       if (filters.status !== 'TODOS') {
-        const isOverdue = item.data_vencimento && new Date(item.data_vencimento) < new Date() && item.saldo > 0.01;
+        const isCanceled = item.situacao === 'CANCELADO';
+        // Só considera vencido se NÃO estiver cancelado
+        const isOverdue = !isCanceled && item.data_vencimento && new Date(item.data_vencimento) < new Date() && item.saldo > 0.01;
         
         // Como normalizamos na entrada, item.situacao já estará correto (EM ABERTO)
         const statusItem = item.situacao || 'EM ABERTO';
@@ -97,10 +99,10 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
         if (filters.status === 'VENCIDO') {
           if (!isOverdue) return false;
         } else if (filters.status === 'EM ABERTO') {
-          // Mostra apenas EM ABERTO que NÃO está vencido (para não duplicar lógica visual)
-          if (statusItem !== 'EM ABERTO' || isOverdue) return false;
+          // Mostra apenas EM ABERTO que NÃO está vencido e NÃO está cancelado
+          if (statusItem !== 'EM ABERTO' || isOverdue || isCanceled) return false;
         } else {
-          // PAGO, NEGOCIADO, LIQUIDADO, etc.
+          // PAGO, NEGOCIADO, LIQUIDADO, CANCELADO etc.
           if (statusItem !== filters.status) return false;
         }
       }
@@ -199,7 +201,11 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
 
             if (jsonData.length < 2) throw new Error("Planilha vazia ou sem dados.");
 
-            const headers = (jsonData[0] as string[]).map(h => String(h).toLowerCase().trim());
+            // Normalização robusta de cabeçalhos: remove acentos para garantir que "Situação" vire "situacao"
+            const headers = (jsonData[0] as string[]).map(h => 
+                String(h).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+            );
+            
             const rows = jsonData.slice(1);
             
             const parsedItems: AccountsReceivable[] = rows.map((row: any) => {
@@ -224,9 +230,17 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
                     return parseFloat(String(val).replace('R$', '').replace(/\./g, '').replace(',', '.')) || 0;
                 };
 
-                // Padronização na importação: Default EM ABERTO
-                let rawSituacao = String(getVal('situacao') || 'EM ABERTO').toUpperCase();
+                // Lógica de Situação aprimorada para preservar CANCELADOS
+                // Busca por 'situacao' ou 'status' (agora sem acentos graças à normalização do header)
+                let valSituacao = getVal('situacao') || getVal('status');
+                
+                // Se valSituacao existir, usa ele. Se não, assume 'EM ABERTO'.
+                let rawSituacao = String(valSituacao || 'EM ABERTO').toUpperCase().trim();
+                
                 if (rawSituacao === 'ABERTO') rawSituacao = 'EM ABERTO';
+                
+                // Se contiver CANCEL (ex: "Cancelado", "Cancelada"), força o status para CANCELADO
+                if (rawSituacao.includes('CANCEL')) rawSituacao = 'CANCELADO';
 
                 return {
                     id: String(getVal('id') || `IMP-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`),
@@ -387,14 +401,37 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
           </thead>
           <tbody className="divide-y divide-slate-50">
             {sortedData.map(item => {
-              const isOverdue = item.data_vencimento && new Date(item.data_vencimento) < new Date() && item.saldo > 0.01;
+              // Lógica de Cancelamento
+              const isCanceled = item.situacao === 'CANCELADO';
+              
+              // Lógica de Vencimento (não considera vencido se estiver cancelado)
+              const isOverdue = !isCanceled && item.data_vencimento && new Date(item.data_vencimento) < new Date() && item.saldo > 0.01;
               const isPaid = item.saldo <= 0.01 || item.situacao === 'PAGO';
               
               // Regras de Visualização Condicional
               const isParcelaAcordo = item.origem === 'NZERP' && !!item.id_acordo;
               const isTituloNegociado = item.situacao === 'NEGOCIADO';
 
-              // Lógica de Status de Cobrança
+              // Lógica de Status Visual (Badge) e Cor
+              let badgeLabel = item.situacao;
+              let badgeStyle = 'bg-slate-100 text-slate-500 border-slate-200';
+
+              if (isCanceled) {
+                  badgeLabel = 'CANCELADO';
+                  badgeStyle = 'bg-slate-100 text-slate-500 border-slate-200'; // Cinza Claro
+              } else if (isPaid) {
+                  badgeLabel = 'PAGO';
+                  badgeStyle = 'bg-emerald-50 text-emerald-600 border-emerald-100'; // Verde
+              } else if (isOverdue) {
+                  badgeLabel = 'VENCIDO';
+                  badgeStyle = 'bg-red-50 text-red-600 border-red-100'; // Vermelho
+              } else {
+                  // EM ABERTO / A VENCER
+                  badgeLabel = 'EM ABERTO';
+                  badgeStyle = 'bg-orange-50 text-orange-600 border-orange-100'; // Laranja
+              }
+
+              // Lógica de Status de Cobrança (Coluna extra)
               let cobrancaLabel = 'EM DIA';
               let cobrancaStyle = 'bg-emerald-50 text-emerald-600 border-emerald-100';
 
@@ -413,9 +450,9 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
               } else if (isOverdue) {
                   cobrancaLabel = 'COBRANDO';
                   cobrancaStyle = 'bg-amber-50 text-amber-600 border-amber-100';
-              } else if (item.situacao === 'CANCELADO') {
+              } else if (isCanceled) {
                   cobrancaLabel = 'CANCELADO';
-                  cobrancaStyle = 'bg-red-50 text-red-400 border-red-100';
+                  cobrancaStyle = 'bg-slate-100 text-slate-400 border-slate-200';
               }
 
               return (
@@ -454,12 +491,8 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
                     {item.saldo?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="px-4 py-3 border-b border-slate-100 text-center">
-                     <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
-                       isPaid ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-                       isOverdue ? 'bg-red-50 text-red-600 border-red-100' : 
-                       'bg-amber-50 text-amber-600 border-amber-100'
-                     }`}>
-                        {isOverdue ? 'VENCIDO' : item.situacao}
+                     <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${badgeStyle}`}>
+                        {badgeLabel}
                      </span>
                   </td>
                   <td className="px-4 py-3 border-b border-slate-100 font-bold text-[10px] text-slate-600 uppercase">{item.numero_documento}</td>
@@ -597,8 +630,10 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
                                <th className="px-6 py-4">Origem</th>
                                <th className="px-6 py-4">Cliente / ID</th>
                                <th className="px-6 py-4 text-center">Vencimento</th>
+                               <th className="px-6 py-4 text-center">Situação</th>
                                <th className="px-6 py-4 text-right">Valor</th>
                                <th className="px-6 py-4 text-right">Saldo</th>
+                               <th className="px-6 py-4">Alterações</th>
                             </tr>
                          </thead>
                          <tbody className="divide-y divide-slate-50 text-[11px]">
@@ -618,8 +653,27 @@ const AccountsReceivableModule: React.FC<{ currentUser: User }> = ({ currentUser
                                      <p className="text-[9px] text-slate-400 uppercase truncate max-w-[200px]">ID: {item.data.id}</p>
                                   </td>
                                   <td className="px-6 py-4 text-center font-bold text-slate-500">{item.data.data_vencimento || '-'}</td>
+                                  <td className="px-6 py-4 text-center">
+                                     <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                                        item.data.situacao === 'CANCELADO' ? 'bg-slate-100 text-slate-500 border-slate-200' :
+                                        item.data.situacao === 'PAGO' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                        (item.data.situacao === 'EM ABERTO' || item.data.situacao === 'ABERTO') ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                        'bg-red-50 text-red-600 border-red-100'
+                                     }`}>
+                                        {item.data.situacao}
+                                     </span>
+                                  </td>
                                   <td className="px-6 py-4 text-right font-black text-slate-900">R$ {item.data.valor_documento.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                                   <td className="px-6 py-4 text-right font-bold text-slate-400">R$ {item.data.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                  <td className="px-6 py-4">
+                                     {item.diff && item.diff.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1">
+                                           {item.diff.map(d => (
+                                              <span key={d} className="bg-blue-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-tighter">{d}</span>
+                                           ))}
+                                        </div>
+                                     ) : <span className="text-slate-300 text-[8px] italic">-</span>}
+                                  </td>
                                </tr>
                             ))}
                          </tbody>

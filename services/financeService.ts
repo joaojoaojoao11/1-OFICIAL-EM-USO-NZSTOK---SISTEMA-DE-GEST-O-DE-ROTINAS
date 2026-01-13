@@ -400,7 +400,30 @@ export class FinanceService {
     const current = await this.getAccountsReceivable();
     return items.map(item => {
       const match = current.find(c => c.id === item.id);
+      
       if (!match) return { data: item, status: 'NEW' as const };
+
+      // LÓGICA DE DETECÇÃO DE MUDANÇA (VENCIMENTO, SALDO, SITUAÇÃO)
+      const diff: string[] = [];
+      
+      const cleanDate = (d: string | null | undefined) => d ? new Date(d).toISOString().split('T')[0] : '';
+      
+      if (cleanDate(match.data_vencimento) !== cleanDate(item.data_vencimento)) {
+          diff.push('VENCIMENTO');
+      }
+      
+      if (Math.abs(Number(match.saldo || 0) - Number(item.saldo || 0)) > 0.01) {
+          diff.push('SALDO');
+      }
+      
+      if ((match.situacao || '').toUpperCase() !== (item.situacao || '').toUpperCase()) {
+          diff.push('SITUAÇÃO');
+      }
+
+      if (diff.length > 0) {
+          return { data: item, status: 'CHANGED' as const, diff };
+      }
+
       return { data: item, status: 'UNCHANGED' as const };
     });
   }
@@ -424,8 +447,6 @@ export class FinanceService {
         return Number(n);
     };
 
-    // const cleanDate = (d: any) => { ... } // Removida pois não é mais usada para diff
-
     return items.map(item => {
       // Comparação de ID insensível a caixa
       const match = current.find(c => cleanStr(c.id) === cleanStr(item.id));
@@ -438,9 +459,6 @@ export class FinanceService {
       
       // Comparação numérica para Saldo
       if (Math.abs(cleanNum(match.saldo) - cleanNum(item.saldo)) > 0.01) diff.push('SALDO');
-
-      // Obs: Outros campos (Fornecedor, Datas, Histórico, etc.) são ignorados na detecção de mudanças
-      // para evitar falsos positivos na validação, conforme solicitado.
 
       if (diff.length > 0) {
           console.debug(`Diff detectado para ID ${item.id}:`, diff);
